@@ -1,0 +1,104 @@
+~~~ VERSION 1 ~~~
+For the first attempt, we just tried to write the simplest possible version which would run:
+ - initialise_particle_cloud samples from Gaussian distributions for x, y and theta
+ - update_particle_cloud uses roulette wheel sampling
+ - estimate_pose takes the average of all particles' positions and orientations
+
+observations:
+ - with a good initial estimate, or a large enough spread of initial particles, the robot would
+   sometimes be able to localise to the correct pose.
+ - due to similarity between different areas of our test map (e.g. lots of right-angled corners,
+   similarly-sized corridors and rooms) the robot would often localise to an incorrect position.
+ - the robot has no ability to recover from an incorrect localisation unless it happens to drive
+   through its estimated position by accident, in which case the noise from the odometry model
+   would sometimes produce accurate particles which would be weighted high enough to correct the
+   cloud over time.
+
+
+~~~ VERSION 2 ~~~
+Next we tried adding in a few randomly-placed particles in each update step, to help the
+robot recover when it is lost. The random particles have a chance of being resampled
+proportional to their weight from the sensor model.
+
+We also reduced the noise values for the odometry model and for the particle cloud initialisation.
+
+observations:
+ - given an accurate enough initial pose, the robot was able to localise reasonably well
+ - sometimes the random particles would cause its best guess to become incorrect, especially
+   in areas with symmetry
+ - the random particles also enabled the robot to fix the incorrect guesses, if it moved around
+   a bit to a less symmetrical area
+
+
+~~~ VERSION 3 ~~~
+Next we tried replacing each random particle with a group of particles. All the particles a group
+have the same randomly-chosen position, but their orientations are spread evenly within the full
+range of orientations. We chose to have 4 particles per group, so their orientations were offset
+by right-angles.
+
+observations:
+ - because of the increased number of random particles, the estimated pose is a lot less stable as it
+   is averaging the position of all resampled particles.
+
+
+~~~ VERSION 4 ~~~
+To fix the problem in version 3, we updated our pose estimation method such that it ignores any
+particles whose X or Y position is further away from the mean by some multiple of the standard
+deviation. The hope was that this would stop the random particles from making the estimated pose
+so unstable.
+
+observations:
+ - once the estimated pose is close to the true pose, the localisation is reasonably stable.
+ - occasionally the estimated pose becomes unstable due to a random particle with a particularly
+   high weight, often in areas with some symmetry
+ - the cross-shaped random particle groups seem to be increasing the chance that the robot's
+   best guess rotates by some multiple of 90 degrees, which can be problematic in rotationally
+   symmetrical areas like corridors.
+
+
+~~~ VERSION 5 ~~~
+Having decided that the rotationally-symmetric particle groups were a hinderance, mainly due to 
+the large increase in random particles, we decided to take a different approach.
+We still wanted to exploit the rotational symmetry of some maps, for example most buildings have
+corridors which are symmetric when rotated by 180 degrees, and most rooms have right-angled corners
+which appear similar to the robot.
+Our new approach involved adjusting the probability distribution of the random particles' headings,
+such that the most likely headings are 0, 90, 180 and 270 degrees offset from the current estimated
+pose. To do this, the heading of a random particle is decided by:
+ - sampling from a normal distribution centred at the current heading
+ - rotating the result by 0, 90, 180 or 270 degrees with equal chance of each
+This gives a 'star-shaped' distribution of possible headings with the points at right angles to one
+another.
+
+observations:
+ - this approach to the random particles was our most successful so far, the robot had a much better
+   chance to recover when its estimated pose was offset by 90 or 180 degrees compared to the true
+   pose.
+ - the robot would still 'lose itself' sometimes, fixating on an incorrect pose estimate which was
+   too heavily weighted. However, when this occurs the particle cloud was almost always noticeably
+   more spread out.
+
+N.B. this version also has a refactored roulette wheel sampling algorithm, with a fix for a very slight logic error.
+
+
+~~~ VERSION 5a ~~~
+This version has no new features compared to version 5, but has better performance due to no longer
+allocating new Pose objects in update_particle_cloud. This is achieved by double-buffering the
+particle cloud.
+
+It also removes the utility functions from previous versions which it no longer uses.
+
+
+~~~ VERSION 6 ~~~
+To try and improve the robot's ability to correct itself when its estimate is a long way from correct,
+we allowed the algorithm to adapt the number of particles being sampled from according to how unsure
+the robot is of its position.
+
+Specifically, after the weights of the existing particles have been calculated, random particles are added
+until the sum of the weights reaches a specified threshold. Additionally, as more random particles are
+added, the amount of noise in their positions and orientations increases.
+
+observations:
+ - the robot's ability to correct incorrect estimates has improved significantly.
+ - when the robot is sure of where it is (ie. the weights are high) it does not add random particles,
+   which significantly reduces the likelihood of it getting 'lost' in the first place.
